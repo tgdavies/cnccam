@@ -33,4 +33,9 @@ public class StateMoveP2 extends CNCCAMState {
     public CNCCAMState movePointTo(Dimension d) {
         return new StateMoveP2(getCenter(), getScale(), getPoint1(), new Dimension((int)d.getWidth(), (int)d.getHeight()));
     }
+
+    public CNCCAMState setScale(double dp1p2d) {
+        return new StateMoveP2(getCenter(), dp1p2d / getP1P2Distance(), getPoint1(), getPoint2());
+    }
+
 }

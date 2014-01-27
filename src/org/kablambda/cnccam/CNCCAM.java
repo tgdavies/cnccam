@@ -25,10 +25,22 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
     private WebcamPanel panel = null;
     private WebcamPicker picker = null;
     private JToolBar toolbar = null;
+    private JTextField p1p2distField = null;
+    private JTextField rField = null;
+    private JLabel scaleLabel = null;
+    // show a circle of this mm radius at center
+    private double r = 0.0;
 
     @Override
     public void mouseDragged(MouseEvent e) {
         state = state.movePointTo(toStateCoords(e.getPoint()));
+        onStateChanged();
+    }
+
+    private void onStateChanged() {
+        p1p2distField.setText(String.format("%.3f", state.getP1P2Distance() * state.getScale()));
+        scaleLabel.setText(scaleLabel());
+        CNCCAMState.writeToPrefs(state);
     }
 
     @Override
@@ -68,35 +80,58 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
 
     private Selection selection = Selection.NONE;
 
-    private CNCCAMState state = new CNCCAMState(new Dimension(0,0), 1.0, new Dimension(-30, -30), new Dimension(30,30));
+    private CNCCAMState state = CNCCAMState.readFromPrefs();
 
     private final Action UP_ACTION = new AbstractAction("up") {
-                @Override
-                public void actionPerformed(ActionEvent e) {
-                    state = state.up();
-                }
-            };
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            state = state.up();
+            onStateChanged();
+        }
+    };
 
     private final Action DOWN_ACTION = new AbstractAction("down") {
-                @Override
-                public void actionPerformed(ActionEvent e) {
-                    state = state.down();
-                }
-            };
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            state = state.down();
+            onStateChanged();
+        }
+    };
 
     private final Action LEFT_ACTION = new AbstractAction("left") {
-                @Override
-                public void actionPerformed(ActionEvent e) {
-                    state = state.left();
-                }
-            };
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            state = state.left();
+        }
+    };
 
     private final Action RIGHT_ACTION = new AbstractAction("right") {
-                @Override
-                public void actionPerformed(ActionEvent e) {
-                    state = state.right();
-                }
-            };
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            state = state.right();
+            onStateChanged();
+        }
+    };
+
+    private final Action SETSCALE_ACTION = new AbstractAction("setscale") {
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            state = state.setScale(Double.parseDouble(p1p2distField.getText()));
+            onStateChanged();
+        }
+    };
+
+    private final Action SETRADIUS_ACTION = new AbstractAction("setr") {
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            String s = rField.getText();
+            if (s.length() > 0) {
+                r = Double.parseDouble(s);
+            } else {
+                r = 0.0;
+            }
+        }
+    };
 
     @Override
     public void mouseClicked(MouseEvent e) {
@@ -106,8 +141,13 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
         return Math.sqrt(Math.pow(d.getWidth() - p.getX(), 2) + Math.pow(d.getHeight() - p.getY(), 2));
     }
 
+    private double distance(double x1, double y1, double x2, double y2) {
+        return Math.sqrt(Math.pow(x1 - x2, 2) + Math.pow(y1 - y2, 2));
+    }
+
     @Override
     public void mousePressed(MouseEvent e) {
+        panel.requestFocusInWindow();
         double p1d = distance(toImageCoords(state.getPoint1()), e.getPoint());
         double p2d = distance(toImageCoords(state.getPoint2()), e.getPoint());
         double centerd = distance(toImageCoords(state.getCenter()), e.getPoint());
@@ -119,6 +159,7 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
             selection = Selection.P2;
         }
         state = selection.newState(state);
+        // no need to fire onStateChanged
     }
 
     @Override
@@ -160,6 +201,10 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
             if (selection == Selection.CENTER) {
                 g.draw(new Ellipse2D.Double(center.getWidth() - 4, center.getHeight() - 4, 9, 9));
             }
+            if (r > 0.0) {
+                double rPixels = r / state.getScale();
+                g.draw(new Ellipse2D.Double(center.getWidth() - rPixels/2 + 0.5, center.getHeight() - rPixels/2 + 0.5, rPixels, rPixels));
+            }
             drawPoint(g, toImageCoords(state.getPoint1()), selection == Selection.P1);
             drawPoint(g, toImageCoords(state.getPoint2()), selection == Selection.P2);
             delegate.paintImage(panel, image, g2);
@@ -175,11 +220,11 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
     }
 
     private Dimension toImageCoords(Dimension d) {
-        return new Dimension((int)(d.getWidth() + webcam.getViewSize().getWidth()/2), (int)(d.getHeight() + webcam.getViewSize().getHeight()/2));
+        return new Dimension((int) (d.getWidth() + webcam.getViewSize().getWidth() / 2), (int) (d.getHeight() + webcam.getViewSize().getHeight() / 2));
     }
 
     private Dimension toStateCoords(Point d) {
-        return new Dimension((int)(d.getX() - webcam.getViewSize().getWidth()/2), (int)(d.getY() - webcam.getViewSize().getHeight()/2));
+        return new Dimension((int) (d.getX() - webcam.getViewSize().getWidth() / 2), (int) (d.getY() - webcam.getViewSize().getHeight() / 2));
     }
 
 
@@ -204,7 +249,7 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
 
         createPanel(webcam);
         toolbar = createToolbar();
-
+        onStateChanged();
         add(picker, BorderLayout.NORTH);
         add(panel, BorderLayout.CENTER);
         add(toolbar, BorderLayout.SOUTH);
@@ -213,18 +258,29 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
 
     private JToolBar createToolbar() {
         JToolBar t = new JToolBar();
-        t.add(LEFT_ACTION);
+        /*t.add(LEFT_ACTION);
         t.add(UP_ACTION);
         t.add(DOWN_ACTION);
-        t.add(RIGHT_ACTION);
-        t.add(new JLabel("Scale (mm/pixel)"));
-        t.add(new JTextField(state.getScale() + "", 6));
-        t.add(new JLabel("P1 -> P2 %04dmm", getP1P2Distance()));
+        t.add(RIGHT_ACTION);*/
+        scaleLabel = new JLabel("");
+        t.add(scaleLabel);
+        t.add(new JLabel(" P1 -> P2"));
+        p1p2distField = new JTextField("", 6);
+        p1p2distField.setMaximumSize(new Dimension(60, 20));
+        t.add(p1p2distField);
+        t.add(new JLabel("mm "));
+        t.add(SETSCALE_ACTION);
+        t.add(new JLabel(" r"));
+        rField = new JTextField("",3);
+        rField.setMaximumSize(new Dimension(30, 20));
+        t.add(rField);
+        t.add(new JLabel("mm "));
+        t.add(SETRADIUS_ACTION);
         return t;
     }
 
-    private double getP1P2Distance() {
-        return 2.0;
+    private String scaleLabel() {
+        return String.format(" %.3f mm/px ", state.getScale());
     }
 
     public static void main(String[] args) {
@@ -295,6 +351,7 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
             if (webcam != null) {
 
                 createPanel((Webcam) e.getItem());
+                onStateChanged();
             }
         }
     }
