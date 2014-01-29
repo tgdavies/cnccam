@@ -1,10 +1,13 @@
 package org.kablambda.cnccam;
 
 import java.awt.*;
+import java.awt.datatransfer.Clipboard;
+import java.awt.datatransfer.ClipboardOwner;
+import java.awt.datatransfer.Transferable;
 import java.awt.event.*;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Rectangle2D;
-import java.awt.image.BufferedImage;
+import java.awt.image.*;
 import java.lang.Thread.UncaughtExceptionHandler;
 
 import javax.swing.*;
@@ -17,7 +20,9 @@ import com.github.sarxos.webcam.WebcamPicker;
 import com.github.sarxos.webcam.WebcamResolution;
 
 
-public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowListener, UncaughtExceptionHandler, ItemListener, MouseListener, MouseMotionListener {
+public class CNCCAM extends JFrame implements
+        Runnable, WebcamListener, WindowListener, UncaughtExceptionHandler, ItemListener,
+        MouseListener, MouseMotionListener, ClipboardOwner {
 
     private static final long serialVersionUID = 1L;
 
@@ -30,6 +35,10 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
     private JLabel scaleLabel = null;
     // show a circle of this mm radius at center
     private double r = 0.0;
+
+    // factor to convert from screen pixels to camera pixels -- i.e. screen_pixel * zoomFactor * scale = mm
+    private double zoomFactor = 1.0;
+    private JCheckBox mergeCheckbox = null;
 
     @Override
     public void mouseDragged(MouseEvent e) {
@@ -45,6 +54,11 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
 
     @Override
     public void mouseMoved(MouseEvent e) {
+
+    }
+
+    @Override
+    public void lostOwnership(Clipboard clipboard, Transferable contents) {
 
     }
 
@@ -133,6 +147,22 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
         }
     };
 
+    private boolean copyToClipboard = false;
+
+    private final Action COPY_ACTION = new AbstractAction("copy") {
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            copyToClipboard = true;
+        }
+    };
+
+    private final Action CLEAR_ACTION = new AbstractAction("clear") {
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            currentImage = null;
+        }
+    };
+
     @Override
     public void mouseClicked(MouseEvent e) {
     }
@@ -177,6 +207,8 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
 
     }
 
+    private BufferedImage currentImage = null;
+
 
     private class CNCPainter implements WebcamPanel.Painter {
 
@@ -191,8 +223,33 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
             delegate.paintPanel(panel, g2);
         }
 
+
         @Override
         public void paintImage(WebcamPanel panel, BufferedImage image, Graphics2D g2) {
+            image = deepCopy(image); // the old image will continue to be updated by the webcam, and may overwrite our annotations
+            if (mergeCheckbox != null && mergeCheckbox.isSelected()) {
+                if (currentImage != null) {
+                    // combine the previous image on top of the new one
+                    Raster oldRaster = currentImage.getRaster();
+                    WritableRaster newRaster = image.getRaster();
+                    int[] oldPixel = new int[4];
+                    int[] newPixel = new int[4];
+                    for (int x = 0; x < image.getWidth(); ++x) {
+                        for (int y = 0; y < image.getHeight(); ++y) {
+                            oldRaster.getPixel(x,y,oldPixel);
+                            newRaster.getPixel(x,y,newPixel);
+                            for (int i = 0; i < 3; ++i) {
+                                newPixel[i] = Math.min(newPixel[i], oldPixel[i]);
+                            }
+                            newRaster.setPixel(x, y, newPixel);
+                        }
+                    }
+                    image.setData(newRaster);
+                }
+                currentImage = deepCopy(image);
+            }
+
+            image = resizeImage(image); // we resize the image so super doesn't need to
             Graphics2D g = (Graphics2D) image.getGraphics();
             Dimension center = toImageCoords(state.getCenter());
             g.setColor(new Color(255, 255, 255, 64));
@@ -203,11 +260,48 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
             }
             if (r > 0.0) {
                 double rPixels = r / state.getScale();
-                g.draw(new Ellipse2D.Double(center.getWidth() - rPixels/2 + 0.5, center.getHeight() - rPixels/2 + 0.5, rPixels, rPixels));
+                g.draw(new Ellipse2D.Double(center.getWidth() - rPixels / 2 + 0.5, center.getHeight() - rPixels / 2 + 0.5, rPixels, rPixels));
             }
             drawPoint(g, toImageCoords(state.getPoint1()), selection == Selection.P1);
             drawPoint(g, toImageCoords(state.getPoint2()), selection == Selection.P2);
-            delegate.paintImage(panel, image, g2);
+            if (copyToClipboard) {
+                TransferableImage trans = new TransferableImage(deepCopy(image));
+                Clipboard c = Toolkit.getDefaultToolkit().getSystemClipboard();
+                c.setContents(trans, CNCCAM.this);
+                copyToClipboard = false;
+            }
+            g2.drawImage(image, 0, 0, null);
+            //delegate.paintImage(panel, image, g2);
+        }
+
+        private BufferedImage resizeImage(BufferedImage image) {
+            int w = panel.getWidth();
+            int h = panel.getHeight();
+
+            if (image.getWidth() != w && image.getHeight() != h) {
+                zoomFactor = ((double)w) / image.getWidth();
+                BufferedImage resized = new BufferedImage(w, h, BufferedImage.TYPE_3BYTE_BGR);
+                Graphics2D gr = resized.createGraphics();
+                gr.setComposite(AlphaComposite.Src);
+                gr.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                gr.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+                gr.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                gr.drawImage(image, 0, 0, w, h, null);
+                gr.dispose();
+                resized.flush();
+
+                return resized;
+            } else {
+                zoomFactor = 1.0;
+                return image;
+            }
+        }
+
+        private BufferedImage deepCopy(BufferedImage bi) {
+            ColorModel cm = bi.getColorModel();
+            boolean isAlphaPremultiplied = cm.isAlphaPremultiplied();
+            WritableRaster raster = bi.copyData(null);
+            return new BufferedImage(cm, raster, isAlphaPremultiplied, null);
         }
 
         private void drawPoint(Graphics2D g, Dimension d, boolean selected) {
@@ -220,18 +314,20 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
     }
 
     private Dimension toImageCoords(Dimension d) {
-        return new Dimension((int) (d.getWidth() + webcam.getViewSize().getWidth() / 2), (int) (d.getHeight() + webcam.getViewSize().getHeight() / 2));
+        return new Dimension(
+                (int) ((d.getWidth() + webcam.getViewSize().getWidth() / 2) * zoomFactor),
+                (int) ((d.getHeight() + webcam.getViewSize().getHeight() / 2) * zoomFactor));
     }
 
     private Dimension toStateCoords(Point d) {
-        return new Dimension((int) (d.getX() - webcam.getViewSize().getWidth() / 2), (int) (d.getY() - webcam.getViewSize().getHeight() / 2));
+        return new Dimension((int) ((d.getX()/zoomFactor) - webcam.getViewSize().getWidth() / 2), (int) ((d.getY()/zoomFactor) - webcam.getViewSize().getHeight() / 2));
     }
 
 
     @Override
     public void run() {
 
-        setTitle("Java Webcam Capture POC");
+        setTitle("CNCCAM");
         setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
 
@@ -271,11 +367,15 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
         t.add(new JLabel("mm "));
         t.add(SETSCALE_ACTION);
         t.add(new JLabel(" r"));
-        rField = new JTextField("",3);
+        rField = new JTextField("", 3);
         rField.setMaximumSize(new Dimension(30, 20));
         t.add(rField);
         t.add(new JLabel("mm "));
         t.add(SETRADIUS_ACTION);
+        t.add(COPY_ACTION);
+        mergeCheckbox = new JCheckBox("merge");
+        t.add(mergeCheckbox);
+        t.add(CLEAR_ACTION);
         return t;
     }
 
@@ -366,7 +466,14 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
         }
 
         webcam = newWebCam;
-        webcam.setViewSize(WebcamResolution.VGA.getSize());
+        Dimension[] sizes = webcam.getViewSizes();
+        Dimension largestSize = null;
+        for (Dimension d : sizes) {
+            if (largestSize == null || largestSize.getWidth() < d.getWidth()) {
+                largestSize = d;
+            }
+        }
+        webcam.setViewSize(largestSize);
         webcam.addWebcamListener(this);
 
         System.out.println("selected " + webcam.getName());
@@ -377,12 +484,41 @@ public class CNCCAM extends JFrame implements Runnable, WebcamListener, WindowLi
         panel.requestFocus();
         panel.addMouseListener(this);
         panel.addMouseMotionListener(this);
+        //panel.setFillArea(true);
+        panel.addComponentListener(new ComponentListener() {
+
+            @Override
+            public void componentResized(ComponentEvent e) {
+                Dimension newSize = e.getComponent().getSize();
+                double widthRatio = newSize.getWidth() / webcam.getViewSize().getWidth();
+                double heightRatio = newSize.getHeight() / webcam.getViewSize().getHeight();
+
+                double newRatio = Math.min(widthRatio, heightRatio);
+                e.getComponent().setSize((int)(newRatio * webcam.getViewSize().getWidth()), (int)(newRatio * webcam.getViewSize().getHeight()));
+            }
+
+            @Override
+            public void componentMoved(ComponentEvent e) {
+
+            }
+
+            @Override
+            public void componentShown(ComponentEvent e) {
+
+            }
+
+            @Override
+            public void componentHidden(ComponentEvent e) {
+
+            }
+        });
         InputMap inputMap = panel.getInputMap();
         ActionMap actionMap = panel.getActionMap();
         addAction(inputMap, actionMap, KeyStroke.getKeyStroke('w'), UP_ACTION);
         addAction(inputMap, actionMap, KeyStroke.getKeyStroke('s'), DOWN_ACTION);
         addAction(inputMap, actionMap, KeyStroke.getKeyStroke('a'), LEFT_ACTION);
         addAction(inputMap, actionMap, KeyStroke.getKeyStroke('d'), RIGHT_ACTION);
+        addAction(inputMap, actionMap, KeyStroke.getKeyStroke(' '), CLEAR_ACTION);
 
         add(panel, BorderLayout.CENTER);
         pack();
