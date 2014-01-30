@@ -39,6 +39,7 @@ public class CNCCAM extends JFrame implements
     // factor to convert from screen pixels to camera pixels -- i.e. screen_pixel * zoomFactor * scale = mm
     private double zoomFactor = 1.0;
     private JCheckBox mergeCheckbox = null;
+    private JCheckBox centerLock = null;
 
     @Override
     public void mouseDragged(MouseEvent e) {
@@ -47,6 +48,7 @@ public class CNCCAM extends JFrame implements
     }
 
     private void onStateChanged() {
+        // no zoom factor -- state distaces are in camera pixels
         p1p2distField.setText(String.format("%.3f", state.getP1P2Distance() * state.getScale()));
         scaleLabel.setText(scaleLabel());
         CNCCAMState.writeToPrefs(state);
@@ -181,7 +183,7 @@ public class CNCCAM extends JFrame implements
         double p1d = distance(toImageCoords(state.getPoint1()), e.getPoint());
         double p2d = distance(toImageCoords(state.getPoint2()), e.getPoint());
         double centerd = distance(toImageCoords(state.getCenter()), e.getPoint());
-        if (centerd < p1d && centerd < p2d) {
+        if (!centerLock.isSelected() && centerd < p1d && centerd < p2d) {
             selection = Selection.CENTER;
         } else if (p1d < p2d) {
             selection = Selection.P1;
@@ -211,6 +213,7 @@ public class CNCCAM extends JFrame implements
 
 
     private class CNCPainter implements WebcamPanel.Painter {
+        private final int PMARKER_R = 10;
 
         private CNCPainter(WebcamPanel.Painter delegate) {
             this.delegate = delegate;
@@ -236,8 +239,8 @@ public class CNCCAM extends JFrame implements
                     int[] newPixel = new int[4];
                     for (int x = 0; x < image.getWidth(); ++x) {
                         for (int y = 0; y < image.getHeight(); ++y) {
-                            oldRaster.getPixel(x,y,oldPixel);
-                            newRaster.getPixel(x,y,newPixel);
+                            oldRaster.getPixel(x, y, oldPixel);
+                            newRaster.getPixel(x, y, newPixel);
                             for (int i = 0; i < 3; ++i) {
                                 newPixel[i] = Math.min(newPixel[i], oldPixel[i]);
                             }
@@ -259,15 +262,15 @@ public class CNCCAM extends JFrame implements
                 g.draw(new Ellipse2D.Double(center.getWidth() - 4, center.getHeight() - 4, 9, 9));
             }
             if (r > 0.0) {
-                double rPixels = r / state.getScale();
-                g.draw(new Ellipse2D.Double(center.getWidth() - rPixels / 2 + 0.5, center.getHeight() - rPixels / 2 + 0.5, rPixels, rPixels));
+                double rPixels = r / state.getScale() * zoomFactor;
+                g.draw(new Ellipse2D.Double(center.getWidth() - rPixels + 0.5, center.getHeight() - rPixels + 0.5, rPixels * 2, rPixels * 2));
             }
             drawPoint(g, toImageCoords(state.getPoint1()), selection == Selection.P1);
             drawPoint(g, toImageCoords(state.getPoint2()), selection == Selection.P2);
             if (copyToClipboard) {
                 TransferableImage trans = new TransferableImage(deepCopy(image));
                 Clipboard c = Toolkit.getDefaultToolkit().getSystemClipboard();
-                c.setContents(trans, CNCCAM.this);
+                c.setContents(trans, null);
                 copyToClipboard = false;
             }
             g2.drawImage(image, 0, 0, null);
@@ -279,7 +282,7 @@ public class CNCCAM extends JFrame implements
             int h = panel.getHeight();
 
             if (image.getWidth() != w && image.getHeight() != h) {
-                zoomFactor = ((double)w) / image.getWidth();
+                zoomFactor = ((double) w) / image.getWidth();
                 BufferedImage resized = new BufferedImage(w, h, BufferedImage.TYPE_3BYTE_BGR);
                 Graphics2D gr = resized.createGraphics();
                 gr.setComposite(AlphaComposite.Src);
@@ -306,9 +309,14 @@ public class CNCCAM extends JFrame implements
 
         private void drawPoint(Graphics2D g, Dimension d, boolean selected) {
             if (selected) {
-                g.draw(new Ellipse2D.Double(d.getWidth() - 4.5, d.getHeight() - 4.5, 9, 9));
+                g.setStroke(new BasicStroke(2));
+            }
+            g.draw(new Ellipse2D.Double(d.getWidth() - PMARKER_R, d.getHeight() - PMARKER_R, PMARKER_R * 2, PMARKER_R * 2));
+            if (selected) {
+                g.setStroke(new BasicStroke(1));
             }
             g.draw(new Rectangle2D.Double(d.getWidth() - 0.5, d.getHeight() - 0.5, 1, 1));
+
         }
 
     }
@@ -320,7 +328,7 @@ public class CNCCAM extends JFrame implements
     }
 
     private Dimension toStateCoords(Point d) {
-        return new Dimension((int) ((d.getX()/zoomFactor) - webcam.getViewSize().getWidth() / 2), (int) ((d.getY()/zoomFactor) - webcam.getViewSize().getHeight() / 2));
+        return new Dimension((int) ((d.getX() / zoomFactor) - webcam.getViewSize().getWidth() / 2), (int) ((d.getY() / zoomFactor) - webcam.getViewSize().getHeight() / 2));
     }
 
 
@@ -358,20 +366,61 @@ public class CNCCAM extends JFrame implements
         t.add(UP_ACTION);
         t.add(DOWN_ACTION);
         t.add(RIGHT_ACTION);*/
+        centerLock = new JCheckBox("lock");
+        centerLock.setSelected(true);
+        t.add(centerLock);
         scaleLabel = new JLabel("");
         t.add(scaleLabel);
         t.add(new JLabel(" P1 -> P2"));
         p1p2distField = new JTextField("", 6);
         p1p2distField.setMaximumSize(new Dimension(60, 20));
+        p1p2distField.addKeyListener(new KeyListener() {
+
+            @Override
+            public void keyTyped(KeyEvent e) {
+                if (e.getKeyChar() == '\n') {
+                    SETSCALE_ACTION.actionPerformed(null);
+                }
+            }
+
+            @Override
+            public void keyPressed(KeyEvent e) {
+
+            }
+
+            @Override
+            public void keyReleased(KeyEvent e) {
+
+            }
+        });
         t.add(p1p2distField);
         t.add(new JLabel("mm "));
-        t.add(SETSCALE_ACTION);
+        //t.add(SETSCALE_ACTION);
         t.add(new JLabel(" r"));
         rField = new JTextField("", 3);
-        rField.setMaximumSize(new Dimension(30, 20));
+        rField.setMaximumSize(new Dimension(60, 20));
+        rField.addKeyListener(new KeyListener() {
+
+            @Override
+            public void keyTyped(KeyEvent e) {
+                if (e.getKeyChar() == '\n') {
+                    SETRADIUS_ACTION.actionPerformed(null);
+                }
+            }
+
+            @Override
+            public void keyPressed(KeyEvent e) {
+
+            }
+
+            @Override
+            public void keyReleased(KeyEvent e) {
+
+            }
+        });
         t.add(rField);
         t.add(new JLabel("mm "));
-        t.add(SETRADIUS_ACTION);
+        //t.add(SETRADIUS_ACTION);
         t.add(COPY_ACTION);
         mergeCheckbox = new JCheckBox("merge");
         t.add(mergeCheckbox);
@@ -484,7 +533,6 @@ public class CNCCAM extends JFrame implements
         panel.requestFocus();
         panel.addMouseListener(this);
         panel.addMouseMotionListener(this);
-        //panel.setFillArea(true);
         panel.addComponentListener(new ComponentListener() {
 
             @Override
@@ -494,7 +542,7 @@ public class CNCCAM extends JFrame implements
                 double heightRatio = newSize.getHeight() / webcam.getViewSize().getHeight();
 
                 double newRatio = Math.min(widthRatio, heightRatio);
-                e.getComponent().setSize((int)(newRatio * webcam.getViewSize().getWidth()), (int)(newRatio * webcam.getViewSize().getHeight()));
+                e.getComponent().setSize((int) (newRatio * webcam.getViewSize().getWidth()), (int) (newRatio * webcam.getViewSize().getHeight()));
             }
 
             @Override
