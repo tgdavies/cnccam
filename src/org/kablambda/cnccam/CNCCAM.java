@@ -8,8 +8,11 @@ import java.awt.event.*;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.*;
+import java.io.File;
+import java.io.IOException;
 import java.lang.Thread.UncaughtExceptionHandler;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 
 import com.github.sarxos.webcam.Webcam;
@@ -268,9 +271,10 @@ public class CNCCAM extends JFrame implements
             drawPoint(g, toImageCoords(state.getPoint1()), selection == Selection.P1);
             drawPoint(g, toImageCoords(state.getPoint2()), selection == Selection.P2);
             if (copyToClipboard) {
-                TransferableImage trans = new TransferableImage(deepCopy(image));
-                Clipboard c = Toolkit.getDefaultToolkit().getSystemClipboard();
-                c.setContents(trans, null);
+                writeImage(image);
+//                TransferableImage trans = new TransferableImage(deepCopy(image));
+//                Clipboard c = Toolkit.getDefaultToolkit().getSystemClipboard();
+//                c.setContents(trans, null);
                 copyToClipboard = false;
             }
             g2.drawImage(image, 0, 0, null);
@@ -319,6 +323,24 @@ public class CNCCAM extends JFrame implements
 
         }
 
+    }
+
+    private void writeImage(BufferedImage image) {
+        File f = getImageFile();
+        try {
+            ImageIO.write(image, "png", f);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private File getImageFile() {
+        int i = 1;
+        File f;
+        do {
+            f = new File("cnccam-" + i++ + ".png");
+        } while (f.exists());
+        return f;
     }
 
     private Dimension toImageCoords(Dimension d) {

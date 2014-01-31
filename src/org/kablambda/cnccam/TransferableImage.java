@@ -1,42 +1,41 @@
 package org.kablambda.cnccam;
 
-import java.awt.*;
+import javax.imageio.ImageIO;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.Transferable;
 import java.awt.datatransfer.UnsupportedFlavorException;
+import java.awt.image.BufferedImage;
+import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
 
 public class TransferableImage implements Transferable {
 
-    private Image i;
+    private File imageFile;
 
-    public TransferableImage(Image i) {
-        this.i = i;
-    }
+    public TransferableImage(BufferedImage image) {
+        try {
+            imageFile = File.createTempFile("copy", ".png");
 
-    public Object getTransferData(DataFlavor flavor)
-            throws UnsupportedFlavorException, IOException {
-        if (flavor.equals(DataFlavor.imageFlavor) && i != null) {
-            return i;
-        } else {
-            throw new UnsupportedFlavorException(flavor);
+            imageFile.deleteOnExit();
+            ImageIO.write(image, "png", imageFile);
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 
     public DataFlavor[] getTransferDataFlavors() {
-        DataFlavor[] flavors = new DataFlavor[1];
-        flavors[0] = DataFlavor.imageFlavor;
-        return flavors;
+        return new DataFlavor[]{
+                DataFlavor.javaFileListFlavor
+        };
     }
 
     public boolean isDataFlavorSupported(DataFlavor flavor) {
-        DataFlavor[] flavors = getTransferDataFlavors();
-        for (DataFlavor f : flavors) {
-            if (flavor.equals(f)) {
-                return true;
-            }
-        }
+        return flavor.match(DataFlavor.javaFileListFlavor);
+    }
 
-        return false;
+    public Object getTransferData(DataFlavor flavor)
+            throws UnsupportedFlavorException, IOException {
+        return Arrays.asList(imageFile);
     }
 }
