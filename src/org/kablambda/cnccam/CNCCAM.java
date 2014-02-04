@@ -20,7 +20,6 @@ import com.github.sarxos.webcam.WebcamEvent;
 import com.github.sarxos.webcam.WebcamListener;
 import com.github.sarxos.webcam.WebcamPanel;
 import com.github.sarxos.webcam.WebcamPicker;
-import com.github.sarxos.webcam.WebcamResolution;
 
 
 public class CNCCAM extends JFrame implements
@@ -43,6 +42,7 @@ public class CNCCAM extends JFrame implements
     private double zoomFactor = 1.0;
     private JCheckBox mergeCheckbox = null;
     private JCheckBox centerLock = null;
+    private JCheckBox minMax = null;
 
     @Override
     public void mouseDragged(MouseEvent e) {
@@ -240,12 +240,13 @@ public class CNCCAM extends JFrame implements
                     WritableRaster newRaster = image.getRaster();
                     int[] oldPixel = new int[4];
                     int[] newPixel = new int[4];
+                    boolean max = minMax.isSelected();
                     for (int x = 0; x < image.getWidth(); ++x) {
                         for (int y = 0; y < image.getHeight(); ++y) {
                             oldRaster.getPixel(x, y, oldPixel);
                             newRaster.getPixel(x, y, newPixel);
                             for (int i = 0; i < 3; ++i) {
-                                newPixel[i] = Math.min(newPixel[i], oldPixel[i]);
+                                newPixel[i] = max ? Math.max(newPixel[i], oldPixel[i]) : Math.min(newPixel[i], oldPixel[i]);
                             }
                             newRaster.setPixel(x, y, newPixel);
                         }
@@ -258,7 +259,7 @@ public class CNCCAM extends JFrame implements
             image = resizeImage(image); // we resize the image so super doesn't need to
             Graphics2D g = (Graphics2D) image.getGraphics();
             Dimension center = toImageCoords(state.getCenter());
-            g.setColor(new Color(255, 255, 255, 64));
+            g.setColor(new Color(255, 0, 0, 128));
             g.drawLine((int) center.getWidth(), 0, (int) center.getWidth(), image.getHeight());
             g.drawLine(0, (int) center.getHeight(), image.getWidth(), (int) center.getHeight());
             if (selection == Selection.CENTER) {
@@ -447,6 +448,10 @@ public class CNCCAM extends JFrame implements
         mergeCheckbox = new JCheckBox("merge");
         t.add(mergeCheckbox);
         t.add(CLEAR_ACTION);
+        minMax = new JCheckBox("max");
+        minMax.setSelected(false);
+        t.add(minMax);
+
         return t;
     }
 
